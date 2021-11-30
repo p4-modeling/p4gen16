@@ -1,0 +1,36 @@
+// generated code, for the purpose of benchmarking
+#include <core.p4>
+#include <sume_switch.p4>
+
+// header
+{%- for header in this.headers %}
+{{ header }}
+{%- endfor %}
+
+// structs
+{%- for struct in this.structs %}
+{{ struct }}
+{%- endfor %}
+
+// actions
+{%- for action in this.actions %}
+{{ action }}
+{%- endfor %}
+
+// parser
+{{ this.parser }}
+
+// pipeline instantiations
+{%- for instantiation in this.control.pipeline.instantiations %}
+{{ instantiation | string }}
+{%- endfor %}
+
+// control
+{{ this.control }}
+
+// instantiation
+SimpleSumeSwitch<headers,metadata,digest_data_t>(
+    {{ this.parser.name }}(),
+    {{ this.control.pipeline.name }}(),
+    {{ this.control.deparse.name }}()
+) main;

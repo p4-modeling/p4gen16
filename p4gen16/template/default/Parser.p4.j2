@@ -1,0 +1,6 @@
+parser {{ this.name }}({{ this.parameters | join(', ') }}) {
+{%- for state in this.states %}
+    {{ state | string | indent }}
+{%- endfor %}
+}// parser parse
+

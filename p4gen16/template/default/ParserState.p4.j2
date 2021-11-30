@@ -1,0 +1,16 @@
+state {{ this.name }} {
+    {% for extra in  this.extract_extra %}
+    p.extract(h.{{ extra }});{% endfor %}
+    p.extract(h.{{ this.header }});
+    {% for extra in  this.extract_extra_after %}
+    p.extract(h.{{ extra }});{% endfor %}
+    {% if this.is_end %}
+    transition accept;
+    {% else %}
+    transition select(h.{{ this.header }}.{{ this.field }}) {
+        {%- for transition in this.transitions %}
+        {{ transition.expr }}: {{ transition.next }};
+        {%- endfor %}
+    }// transition select(h.{{ this.header }}.{{ this.field }})
+    {% endif %}
+}// state {{ this.name }}

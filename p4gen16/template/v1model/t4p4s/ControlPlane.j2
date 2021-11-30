@@ -1,0 +1,307 @@
+# Copyright 2016 Eotvos Lorand University, Budapest, Hungary
+# 
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+# 
+#     http://www.apache.org/licenses/LICENSE-2.0
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+def match_type_order(t):
+    match_types = {
+        "exact":    0,
+        "lpm":      1,
+        "ternary":  2,
+    }
+    return match_types[t]
+
+#[ #include <unistd.h>
+
+#[ #include "dpdk_lib.h"
+#[ #include "actions.h"
+#[ #include "tables.h"
+#[ #include <arpa/inet.h>
+
+#[ extern void table_setdefault_promote  (int tableid, uint8_t* value);
+#[ extern void exact_add_promote  (int tableid, uint8_t* key, uint8_t* value, bool should_print);
+#[ extern void exact_add_promote_multiple(int tableid, uint8_t** keys, uint8_t* value, uint64_t nr_entries, bool should_print);
+#[ extern void lpm_add_promote    (int tableid, uint8_t* key, uint8_t depth, uint8_t* value, bool should_print);
+#[ extern void lpm_add_promote_multiple(int tableid, uint8_t** keys, uint8_t* depths, uint8_t* value, uint64_t nr_entries);
+#[ extern void ternary_add_promote(int tableid, uint8_t* key, uint8_t* mask, uint8_t* value, bool should_print);
+#[ extern void ternary_add_promote_multiple(int tableid, uint8_t** keys, uint8_t** masks, uint8_t* value, uint64_t nr_entries);
+
+
+for table in hlir16.tables:
+    #[ extern void table_${table.name}_key(packet_descriptor_t* pd, uint8_t* key); // defined in dataplane.c
+
+
+if len(hlir16.tables)>0:
+    max_bytes = max([0] + [t.key_length_bytes for t in hlir16.tables if hasattr(t, 'key')])
+    #[ uint8_t reverse_buffer[$max_bytes];
+
+# Variable width fields are not supported
+def get_key_byte_width(k):
+    # for special functions like isValid
+    if k.get_attr('header') is None:
+        return 0
+    
+    if k.header.type._type_ref('is_vw', False):
+        return 0
+
+    if hasattr(k, 'width'):
+        return (k.width+7)/8
+
+    # reaching this point, k can only come from metadata
+    return (k.header.type.size+7)/8
+
+
+hlir16_tables_with_keys = [t for t in hlir16.tables if hasattr(t, 'key')]
+keyed_table_names = ", ".join(["\"T4LIT(" + table.name + ",table)\"" for table in hlir16_tables_with_keys])
+
+
+for table in hlir16_tables_with_keys:
+    #[ // note: ${table.name}, ${table.match_type}, ${table.key_length_bytes}
+    #{ void ${table.name}_add(
+    for k in table.key.keyElements:
+        # TODO should properly handle specials (isValid etc.)
+        if k.get_attr('header') is None:
+            continue
+
+        byte_width = get_key_byte_width(k)
+        #[ uint8_t field_instance_${k.header.name}_${k.field_name}[$byte_width],
+        
+        # TODO have keys' and tables' match_type the same case (currently: LPM vs lpm)
+        if k.match_type == "ternary":
+            #[ uint8_t ${k.field_name}_mask[$byte_width],
+        if k.match_type == "lpm":
+            #[ uint8_t field_instance_${k.header.name}_${k.field_name}_prefix_length,
+
+    #}     struct ${table.name}_action action, bool has_fields)
+    #{ {
+
+    #[     uint8_t key[${table.key_length_bytes}];
+
+    byte_idx = 0
+    for k in sorted((k for k in table.key.keyElements if k.get_attr('match_type') is not None), key = lambda k: match_type_order(k.match_type)):
+        # TODO should properly handle specials (isValid etc.)
+        if k.get_attr('header') is None:
+            continue
+
+        byte_width = get_key_byte_width(k)
+        #[ memcpy(key+$byte_idx, field_instance_${k.header.name}_${k.field_name}, $byte_width);
+        byte_idx += byte_width
+
+    if table.match_type == "LPM":
+        #[ uint8_t prefix_length = 0;
+        for k in table.key.keyElements:
+            # TODO should properly handle specials (isValid etc.)
+            if k.get_attr('header') is None:
+                continue
+
+            if k.match_type == "exact":
+                #[ prefix_length += ${get_key_byte_width(k)};
+            if k.match_type == "lpm":
+                #[ prefix_length += field_instance_${k.header.name}_${k.field_name}_prefix_length;
+        #[ int c, d;
+        #[ for(c = ${byte_idx-1}, d = 0; c >= 0; c--, d++) *(reverse_buffer+d) = *(key+c);
+        #[ for(c = 0; c < ${byte_idx}; c++) *(key+c) = *(reverse_buffer+c);
+        #[ lpm_add_promote(TABLE_${table.name}, (uint8_t*)key, prefix_length, (uint8_t*)&action, has_fields);
+
+    if table.match_type == "EXACT":
+        #[ exact_add_promote(TABLE_${table.name}, (uint8_t*)key, (uint8_t*)&action, has_fields);
+
+    #} }
+
+for table in hlir16.tables:
+    #[ void ${table.name}_setdefault(struct ${table.name}_action action)
+    #[ {
+    #[     table_setdefault_promote(TABLE_${table.name}, (uint8_t*)&action);
+    #[ }
+
+
+# TODO is there a more appropriate source for this than the annotation?
+def get_action_name_str(action):
+    name_parts = action.action_object.annotations.annotations.get('name').expr[0].value
+    return name_parts.rsplit(".")[-1]
+
+
+for table in hlir16_tables_with_keys:
+    #{ void ${table.name}_add_table_entry(struct p4_ctrl_msg* ctrl_m) {
+    for i, k in enumerate(table.key.keyElements):
+        # TODO should properly handle specials (isValid etc.)
+        if k.get_attr('header') is None:
+            continue
+
+        if k.match_type == "exact":
+            #[ uint8_t* field_instance_${k.header.name}_${k.field_name} = (uint8_t*)(((struct p4_field_match_exact*)ctrl_m->field_matches[${i}])->bitmap);
+        if k.match_type == "lpm":
+            #[ uint8_t* field_instance_${k.header.name}_${k.field_name} = (uint8_t*)(((struct p4_field_match_lpm*)ctrl_m->field_matches[${i}])->bitmap);
+            #[ uint16_t field_instance_${k.header.name}_${k.field_name}_prefix_length = ((struct p4_field_match_lpm*)ctrl_m->field_matches[${i}])->prefix_length;
+        if k.match_type == "ternary":
+            # TODO are these right?
+            #[ uint8_t* field_instance_${k.header.name}_${k.field_name} = (uint8_t*)(((struct p4_field_match_lpm*)ctrl_m->field_matches[${i}])->bitmap);
+            #[ uint16_t field_instance_${k.header.name}_${k.field_name}_prefix_length = ((struct p4_field_match_lpm*)ctrl_m->field_matches[${i}])->prefix_length;
+
+    for action in table.actions:
+        # TODO is there a more appropriate source for this than the annotation?
+        action_name_str = get_action_name_str(action)
+        #{ if(strcmp("$action_name_str", ctrl_m->action_name)==0) {
+        #[     struct ${table.name}_action action;
+        #[     action.action_id = action_${action.action_object.name};
+        for j, p in enumerate(action.action_object.parameters.parameters):
+            #[ uint8_t* ${p.name} = (uint8_t*)((struct p4_action_parameter*)ctrl_m->action_params[$j])->bitmap;
+            #[ memcpy(action.${action.action_object.name}_params.${p.name}, ${p.name}, ${(p.type._type_ref.size+7)/8});
+
+        #{     ${table.name}_add(
+        for i, k in enumerate(table.key.keyElements):
+            # TODO handle specials properly (isValid etc.)
+            if k.get_attr('header') is None:
+                continue
+
+            #[ field_instance_${k.header.name}_${k.field_name},
+            if k.match_type == "lpm":
+                #[ field_instance_${k.header.name}_${k.field_name}_prefix_length,
+            if k.match_type == "ternary":
+                #[ 0 /* TODO dstPort_mask */,
+        #[     action, ${"false" if len(action.action_object.parameters.parameters) == 0 else "true"});
+        #}
+
+        for j, p in enumerate(action.action_object.parameters.parameters):
+            if p.type._type_ref.size <= 32:
+                size = 8 if p.type._type_ref.size <= 8 else 16 if p.type._type_ref.size <= 16 else 32
+                #[ dbg_bytes(${p.name}, sizeof(uint${size}_t), "        : $$[field]{p.name}/$${}{%d} = $$[bytes]{}{%d} = ", ${p.type._type_ref.size}, *(uint${size}_t*)${p.name});
+            else:
+                #[ dbg_bytes(${p.name}, (${p.type._type_ref.size}+7)/8, "        : $$[field]{p.name}/$${}{%d} = ", ${p.type._type_ref.size});
+
+        #} } else
+
+    valid_actions = ", ".join(["\" T4LIT(" + get_action_name_str(a) + ",action) \"" for a in table.actions])
+    #[ debug(" $$[warning]{}{!!!! Table add entry} on table $$[table]{table.name}: action name $$[warning]{}{mismatch}: $$[action]{}{%s}, expected one of ($valid_actions).\n", ctrl_m->action_name);
+    #} }
+
+for table in hlir16_tables_with_keys:
+    #{ void ${table.name}_set_default_table_action(struct p4_ctrl_msg* ctrl_m) {
+    for action in table.actions:
+        action_name_str = get_action_name_str(action)
+        #{ if(strcmp("$action_name_str", ctrl_m->action_name)==0) {
+        #[     struct ${table.name}_action action;
+        #[     action.action_id = action_${action.action_object.name};
+        for j, p in enumerate(action.action_object.parameters.parameters):
+            #[ uint8_t* ${p.name} = (uint8_t*)((struct p4_action_parameter*)ctrl_m->action_params[$j])->bitmap;
+            #[ memcpy(action.${action.action_object.name}_params.${p.name}, ${p.name}, ${(p.type._type_ref.size+7)/8});
+        #[     debug(" " T4LIT(ctl>,incoming) " " T4LIT(Set default action,action) " for $$[table]{table.name}: $$[action]{action_name_str}\n");
+        #[     ${table.name}_setdefault( action );
+        #} } else
+
+    valid_actions = ", ".join(["\" T4LIT(" + get_action_name_str(a) + ",action) \"" for a in table.actions])
+    #[ debug(" $$[warning]{}{!!!! Table setdefault} on table $$[table]{table.name}: action name $$[warning]{}{mismatch} ($$[action]{}{%s}), expected one of ($valid_actions).\n", ctrl_m->action_name);
+    #} }
+
+
+#{ void ctrl_add_table_entry(struct p4_ctrl_msg* ctrl_m) {
+for table in hlir16_tables_with_keys:
+    #{ if (strcmp("${table.name}", ctrl_m->table_name) == 0) {
+    #[     ${table.name}_add_table_entry(ctrl_m);
+    #[     return;
+    #} }
+#[     debug(" $$[warning]{}{!!!! Table add entry}: table name $$[warning]{}{mismatch} ($$[table]{}{%s}), expected one of ($keyed_table_names).\n", ctrl_m->table_name);
+#} }
+
+
+#[ extern char* action_names[];
+
+#{ void ctrl_setdefault(struct p4_ctrl_msg* ctrl_m) {
+for table in hlir16_tables_with_keys:
+    #{ if (strcmp("${table.name}", ctrl_m->table_name) == 0) {
+    #[     ${table.name}_set_default_table_action(ctrl_m);
+    #[     return;
+    #} }
+
+#[     debug(" $$[warning]{}{!!!! Table setdefault}: table name $$[warning]{}{mismatch} ($$[table]{}{%s}), expected one of ($keyed_table_names).\n", ctrl_m->table_name);
+#} }
+
+
+#[ extern volatile int ctrl_is_initialized;
+#{ void ctrl_initialized() {
+#[     debug("   " T4LIT(::,incoming) " Control plane init " T4LIT(done,success) "\n");
+#[     ctrl_is_initialized = 1;
+#} }
+
+
+#{ void recv_from_controller(struct p4_ctrl_msg* ctrl_m) {
+#{     if (ctrl_m->type == P4T_ADD_TABLE_ENTRY) {
+#[          ctrl_add_table_entry(ctrl_m);
+#[     } else if (ctrl_m->type == P4T_SET_DEFAULT_ACTION) {
+#[         ctrl_setdefault(ctrl_m);
+#[     } else if (ctrl_m->type == P4T_CTRL_INITIALIZED) {
+#[         ctrl_initialized();
+#}     }
+#} }
+
+
+
+#[ extern struct socket_state state[NB_SOCKETS];
+#[ ctrl_plane_backend bg;
+#[ void init_control_plane()
+#[ {
+#[ #ifndef T4P4S_NO_CONTROL_PLANE
+#[     bg = create_backend(3, 1000, "localhost", 11111, recv_from_controller);
+#[     launch_backend(bg);
+#[@@ for table in this.tables @@@@ set is_ternary = false @@@@ if table.keys[0].match_kind == 'ternary' @@@@ set is_ternary = true @@@@ endif @@@@ set is_lpm = false @@@@ if table.keys[0].match_kind == 'lpm' @@@@ set is_lpm = true @@@@ endif @@
+#[ #define BENCHMARK_TABLE_ENTRIES @= table.size =@
+#[ #define BENCHMARK_KEY_SIZE 4
+#[
+#[ uint8_t** keys@= loop.index =@ = (uint8_t**)malloc(sizeof(uint8_t*) * BENCHMARK_TABLE_ENTRIES);@@ if is_ternary @@
+#[ uint8_t** masks@= loop.index =@ = (uint8_t**)malloc(sizeof(uint8_t*) * BENCHMARK_TABLE_ENTRIES);@@ endif @@@@ if is_lpm @@
+#[ uint8_t* depths@= loop.index =@ = (uint8_t*)malloc(sizeof(uint8_t) * BENCHMARK_TABLE_ENTRIES);@@ endif @@
+#[ for (uint64_t j = 0; j < BENCHMARK_TABLE_ENTRIES; ++j) { keys@= loop.index =@[j]=(uint8_t*)malloc(BENCHMARK_KEY_SIZE);@@ if is_ternary @@ masks@= loop.index =@[j]=(uint8_t*)malloc(BENCHMARK_KEY_SIZE);@@ endif @@ }
+#[ for (uint32_t j = 0; j < BENCHMARK_TABLE_ENTRIES; ++j)
+#[ {
+#[  uint8_t key_arr[4];@@ if is_ternary @@ uint8_t mask_arr[4];@@ endif @@
+#[  uint32_t value = @@ if is_lpm @@htonl(j + 0xFF)@@ else @@j@@ endif @@;@@ if is_ternary @@ uint32_t mask = 0xFFFFFFFF;@@ endif @@@@ if is_lpm @@
+#[  uint8_t depth = 24;
+#[  if (j >= (BENCHMARK_TABLE_ENTRIES-256)) { depth = 30; }@@ endif @@
+#[  memcpy(key_arr, &value, 4);@@ if is_ternary @@ memcpy(mask_arr, &mask, 4);@@ endif @@@@ if is_lpm @@
+#[  if ((4 - sizeof(value)) > 0) {
+#[      uint8_t zero = 0x0;
+#[      for (uint32_t k = sizeof(value); k < 4; k++) {
+#[          memcpy((uint8_t*)key_arr + k, &zero, 1);
+#[      }
+#[  }
+#[
+#[  for (uint32_t k = 0; k < @= table.keys | length =@; k++) {
+#[      memcpy(((uint8_t*)keys@= loop.index =@[j])+(k*4), key_arr, 4);
+#[  }
+#[  depths@= loop.index =@[j] = depth;@@ else @@
+#[
+#[  memcpy(((uint8_t*)keys@= loop.index =@[j])+0, key_arr, 4);@@ if is_ternary @@
+#[  memcpy(((uint8_t*)masks@= loop.index =@[j])+0, mask_arr, 4);@@ endif @@
+#[ @@ endif @@
+#[ }
+#[ struct @= table.name =@_0_action action@= loop.index =@;
+#[ action@= loop.index =@.action_id = action_@= this.action.name =@;
+#[@@ if this.action.parameter | length > 0  @@
+#[ uint@@ if this.action.parameter[0].size <= 8 @@@=8=@@@ else @@@= 16 =@@@ endif @@_t data = @= this.egress_port =@;  @@ for param in this.action.parameter @@
+#[ memcpy(action@= loop.index =@.@= this.action.name =@_params.@= param.name =@, &data, @@ if this.action.parameter[0].size <= 8 @@@=1=@@@ else @@@= 2 =@@@ endif @@);@@ endfor @@@@ endif @@
+#[@@ if is_ternary @@
+#[ ternary_add_promote_multiple(TABLE_@= table.name =@_0, (uint8_t**)keys@= loop.index =@, (uint8_t**)masks@= loop.index =@, (uint8_t*)&action@= loop.index =@, BENCHMARK_TABLE_ENTRIES);@@ elif is_lpm @@
+#[ lpm_add_promote_multiple(TABLE_@= table.name =@_0, (uint8_t**)keys@= loop.index =@, (uint8_t*)depths@= loop.index =@, (uint8_t*)&action@= loop.index =@, BENCHMARK_TABLE_ENTRIES);@@ else @@
+#[ exact_add_promote_multiple(TABLE_@= table.name =@_0, (uint8_t**)keys@= loop.index =@, (uint8_t*)&action@= loop.index =@, BENCHMARK_TABLE_ENTRIES, true);@@ endif @@
+#[ for (uint64_t j = 0; j < BENCHMARK_TABLE_ENTRIES; ++j) { free(keys@= loop.index =@[j]); }
+#[ free(keys@= loop.index =@);@@ if is_ternary @@ free(masks@= loop.index =@);@@ endif @@@@ if is_lpm @@ free(depths@= loop.index =@);@@ endif @@
+#[@@ endfor @@
+#[ 
+#[     #ifdef T4P4S_DEBUG
+#[     for (int i = 0; i < NB_TABLES; i++) {
+#[         lookup_table_t t = table_config[i];
+#[         if (state[0].tables[t.id][0]->init_entry_count > 0)
+#[             debug("    " T4LIT(:,incoming) " Table " T4LIT(%s,table) " got " T4LIT(%d) " entries from the control plane\n", state[0].tables[t.id][0]->name, state[0].tables[t.id][0]->init_entry_count);
+#[         }
+#[     #endif
+#[ #endif
+#[ }

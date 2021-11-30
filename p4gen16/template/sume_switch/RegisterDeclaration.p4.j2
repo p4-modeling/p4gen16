@@ -1,0 +1,8 @@
+@Xilinx_MaxLatency(1)
+@Xilinx_ControlWidth({{ this.size }})
+extern void {{ this.name }}_reg_rw(
+    in bit<{{ this.size }}> index,
+    in bit<{{ this.width }}> newVal,
+    in bit<8> opCode,
+    out bit<{{ this.width }}> result
+);

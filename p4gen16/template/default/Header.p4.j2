@@ -1,0 +1,5 @@
+header {{ this.type }} {
+{%- for field in this.fields %}
+    {{ field | string | indent }};
+{%- endfor %}
+}// header {{ this.type }}

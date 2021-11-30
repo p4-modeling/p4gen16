@@ -1,0 +1,24 @@
+// generated rules
+{% set ports = [] %}
+{%- for rule in this.l3_rules %}
+{%- set name = "table_ipv4" %}
+{%- if rule.table > 0 %}
+{%- set name = ["table_ipv4_", rule.table|string]|join("") %}
+{%- endif %}
+{%- if rule.match_type == "lpm" %}
+table_lpm_add_entry {{ name }} set_id {{rule.address.dq }}/{{ rule.address.mask }} => {{ rule.port | int(rule.port, 16)}}
+{%- elif rule.match_type == "exact" %}
+table_cam_add_entry {{ name }} set_id {{ rule.address.dq }} => {{ rule.port | int(rule.port, 16)}}
+{%- elif rule.match_type == "ternary" %}
+table_tcam_add_entry {{ name }} {{ loop.index }} set_id {{ rule.address.dq }}/{{ rule.address.netmask() }} => {{ rule.port | int(rule.port, 16)}}
+{%- endif %}
+{%- if rule.port not in ports %}
+{{- ports.append(rule.port) | default("", true)}}
+{%- endif %}
+{%- endfor %}
+{%- for port in ports %}
+{%- if (port | int(port, 16) ) != 0 %}
+table_cam_add_entry table_ethernet set_egress_port {{ port | int(port, 16) }} => {{ port }}
+{%- endif %}
+{%- endfor %}
+

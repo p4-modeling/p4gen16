@@ -1,0 +1,18 @@
+table {{ this.name }} {
+    key = {
+{%- for key in this.keys %}
+        {{ key | string | indent }}
+{%- endfor %}
+    }
+    actions = {
+{%- for actions in this.actions | sort(attribute='name') %}
+        {{ actions.name | string | indent(8) }};
+{%- endfor %}
+    }
+{%- if this.default_action %}
+    default_action = {{ this.default_action.name }};
+{%- endif %}
+{%- if this.size %}
+    size = {{ this.size }};
+{%- endif %}
+}

@@ -1,0 +1,34 @@
+// generated code, for the purpose of benchmarking
+#include <core.p4>
+#include <v1model.p4>
+
+// header
+{%- for header in this.headers %}
+{{ header }}
+{%- endfor %}
+
+// structs
+{%- for struct in this.structs %}
+{{ struct }}
+{%- endfor %}
+
+// actions
+{%- for action in this.actions %}
+{{ action }}
+{%- endfor %}
+
+// parser
+{{ this.parser }}
+
+// control
+{{ this.controls }}
+
+// instantiation
+V1Switch<headers, metadata>(
+    {{ this.parser.name }}(),
+    {{ this.controls.verify.name }}(),
+    {{ this.controls.ingress.name }}(),
+    {{ this.controls.egress.name}}(),
+    {{ this.controls.update.name }}(),
+    {{ this.controls.deparse.name }}()
+) main;

@@ -1,0 +1,7 @@
+control {{ this.name }}({{ this.parameter | join(', ') }}){
+    apply {
+{%- for header in this.header %}
+        p.emit({{ header }});
+{%- endfor %}
+    }
+}// control {{ this.name }}

@@ -1,0 +1,22 @@
+parser {{ this.name }}({{ this.parameters | join(', ') }}) {
+    state start {
+	meta.id = 0;
+	meta.accept = false;
+	digest_data.unused = 0;
+        transition parse_{{ this.start }};
+    }// state start
+{%- for state in this.states %}
+    {{ state | string | indent }}
+{%- endfor %}
+{%- for state in this.ends %}
+    state parse_{{ state }} {
+        p.extract(h.{{ state }});
+        transition happy;
+    }// state parse_{{ state }}
+{%- endfor %}
+    state happy {
+        meta.accept = true;
+        transition accept;
+    }//state happy
+}// parser parse
+

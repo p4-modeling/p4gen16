@@ -1,0 +1,14 @@
+control {{ this.name }}({{ this.parameters | join(', ') }}){
+{%- for action in this.actions %}
+    {{ action | string | indent }}
+{%- endfor %}
+{%- for table in this.tables %}
+    {{ table | string | indent }}
+{%- endfor %}
+    apply {
+{%- for statement in this.sequence %}
+        {{ statement | string | indent(8) }}
+{%- endfor %}
+    }
+}// control {{ this.name }}
+

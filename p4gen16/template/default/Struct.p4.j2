@@ -1,0 +1,5 @@
+struct {{ this.name }} {
+{%- for field in this.fields %}
+    {{ field | string | indent }};
+{%- endfor %}
+}// struct {{ this.name }}

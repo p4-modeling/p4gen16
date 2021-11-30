@@ -1,0 +1,5 @@
+action {{ this.name }}({{ this.parameter | join(', ')}}) {
+{%- for statement in this.statements %}
+    {{ statement | string | indent }}
+{%- endfor %}
+}// action {{ this.name }}

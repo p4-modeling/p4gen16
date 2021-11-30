@@ -1,0 +1,7 @@
+table_set_default table_ipv4 drop
+table_set_default table_ethernet drop
+{%- for rule in this.l3_rules %}
+table_add table_ipv4 set_id {{ rule.address }} => {{ loop.index }}
+table_add table_ethernet set_egress_port {{ loop.index }} => {{ rule.port }}
+{%- endfor %}
+

@@ -1,0 +1,16 @@
+control {{ this.name }}(
+    inout headers h,
+    inout metadata meta
+){ {#- only: block statements (statement sequence; if/else), verify_checksum|update_checksum, return #}
+    apply {
+    	{% if this.enable %}
+        {{ this.action }}_checksum(
+            {{ this.verify | lower }},
+            { {{ this.checked_fields | join(', ') }} },
+            {{ this.field }},
+            {{ this.algorithm }}
+        );
+    	{% endif %}
+    }
+}// control {{ this.name }}
+
